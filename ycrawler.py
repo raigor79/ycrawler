@@ -38,7 +38,8 @@ async def fetch(client):
 async def main():
     async with aiohttp.ClientSession() as client:
         html = await fetch(client)
-        print(html)
+        pars_html = HtmlParser(html, 'a', {'class':'storylink'})
+        print(pars_html.links)
         
  
 if __name__ == "__main__":
