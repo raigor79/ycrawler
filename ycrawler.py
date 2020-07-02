@@ -56,9 +56,7 @@ class HtmlParser(HTMLParser):
                 if flag:
                     data = self.url + '/' + attrs[pos][1] if re.search('^item\?id', attrs[pos][1]) else attrs[pos][1]
                     for excpt in URL_EXCEPTIONS:
-                        if re.search(excpt, attrs[pos][1]):
-                            pass
-                        else:
+                        if not re.search(excpt, attrs[pos][1]):
                             self.links.append(data)
 
 
