@@ -32,11 +32,12 @@ parser.add_argument(
 URL_EXCEPTIONS = [r'^bookmarklet.html',]
 
 class HtmlParser(HTMLParser):
-    def __init__(self, html_text, args, url = ''):
+    def __init__(self, html_text, args, url = '', url_ext = URL_EXCEPTIONS):
         self.links = []
         self.args = args
         self.html_text = html_text
         self.url = url
+        self.url_ext = url_ext
         super().__init__()
         self.feed(self.html_text)
     
@@ -55,9 +56,9 @@ class HtmlParser(HTMLParser):
                 if flag:
                     log.debug('url {}'.format(attrs[pos][1]))
                     url_data = self.url + '/' + attrs[pos][1] if re.search('^item\?id', attrs[pos][1]) else attrs[pos][1]
-                    if URL_EXCEPTIONS:
+                    if self.url_ext:
                         f_excpt = False
-                        for excpt in URL_EXCEPTIONS:
+                        for excpt in self.url_ext:
                             f_excpt |=  True if re.search(excpt, attrs[pos][1]) else False
                         if not f_excpt: 
                             self.links.append(url_data)
@@ -66,12 +67,24 @@ class HtmlParser(HTMLParser):
 
 
 def save_page(path, data):
+    ''' Fuction save data in file
+    arguments:
+    path - A string containing the path and file name
+    data - Data written to file
+    '''
     filename = path
     with open(filename, 'wb') as file:
         file.write(data)
 
 
 async def fetch_save(client, url, fsave, path = './NEWS'):
+    """ Coroutine reads url data and displays them in text and binary form
+    arguments:
+    client - aiothttp.SessionClient
+    url - site url
+    fsave - flag save in file
+    path -  save path
+    """
     try:
         async with client.get(url, allow_redirects=True) as resp:
             log.debug('status code {}'.format(resp.status))
@@ -91,7 +104,9 @@ async def fetch_save(client, url, fsave, path = './NEWS'):
     
 
 def make_dir(path):
-    """
+    """ Directories creation function
+    arguments:
+    path - full path make directory
     """
     if not os.path.isdir(path):
         try:
@@ -134,7 +149,6 @@ async def main(opt):
                     html_text = ''
                 pars_url_comment = HtmlParser(html_text, {'tag':'a', 'rel': 'nofollow', 'par_find':'href',}, opt.url)
                 for comment in pars_url_comment.links:
-                    #print(comment)
                     task_com = asyncio.create_task(fetch_save(client, comment, True, path_comments))
                     task_comments.append(task_com)
                 await asyncio.gather(*task_comments)
@@ -142,7 +156,6 @@ async def main(opt):
             log.info('Processed {} news'.format(len(pars_url_news_links)))
             await asyncio.sleep(opt.period)
             
-
 
 if __name__ == "__main__":
     args = parser.parse_args()
