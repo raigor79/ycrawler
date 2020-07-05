@@ -49,15 +49,20 @@ class HtmlParser(HTMLParser):
                 if (attr) in argum.items():
                     flag = True
                 if flag and self.args['par_find'] in attr:
-                    flag = True
                     pos = ind
                 ind += 1
             else:
                 if flag:
-                    data = self.url + '/' + attrs[pos][1] if re.search('^item\?id', attrs[pos][1]) else attrs[pos][1]
-                    for excpt in URL_EXCEPTIONS:
-                        if not re.search(excpt, attrs[pos][1]):
-                            self.links.append(data)
+                    log.debug('url {}'.format(attrs[pos][1]))
+                    url_data = self.url + '/' + attrs[pos][1] if re.search('^item\?id', attrs[pos][1]) else attrs[pos][1]
+                    if URL_EXCEPTIONS:
+                        f_excpt = False
+                        for excpt in URL_EXCEPTIONS:
+                            f_excpt |=  True if re.search(excpt, attrs[pos][1]) else False
+                        if not f_excpt: 
+                            self.links.append(url_data)
+                    else:
+                        self.links.append(url_data)
 
 
 def save_page(path, data):
@@ -69,14 +74,16 @@ def save_page(path, data):
 async def fetch_save(client, url, fsave, path = './NEWS'):
     try:
         async with client.get(url, allow_redirects=True) as resp:
-            #assert resp.status == 200
+            log.debug('status code {}'.format(resp.status))
             data = await resp.read()
             if fsave:
-                simbs = [ '\\', '/', ':', '*', '?', '"', '<', '>', '|', '+', '!', '%', '@']
+                simbs = [ '\\', '/', ':', '*', '?', '"', '<', '>', '|', '+', '!', '%', '@', '~', '-']
                 for simb in simbs:
                     if simb in url:
                         url = url.replace(simb, '')
-                path = path + '/' + url
+                len_name_file = 100 if len(url) > 100 else len(url) 
+                path = path + '/' + url[:len_name_file-5] + url[len(url)-5:]
+                log.debug('name_file {}'.format(path))
                 save_page(path, data)
             return await resp.text()
     except Exception as e:
@@ -97,10 +104,13 @@ async def main(opt):
     list_uploaded_news = []
     tasks_news = []
     task_comments = []
-    tm = aiohttp.ClientTimeout(total=10)
-    async with aiohttp.ClientSession(timeout=tm) as client:
+    tm = aiohttp.ClientTimeout(total=30)
+    conn = aiohttp.TCPConnector(limit_per_host=30)
+    async with aiohttp.ClientSession(timeout=tm, connector=conn) as client:
         while True:
             html_text = await fetch_save(client, opt.url, False)
+            if not html_text:
+                html_text = ''
             pars_url_news = HtmlParser(html_text, {'tag':'a', 'class': 'storylink', 'par_find':'href',}, opt.url)
             pars_id_news = HtmlParser(html_text, {'tag':'tr', 'class': 'athing', 'par_find':'id'}, opt.url)
             make_dir(opt.dir)
@@ -109,8 +119,8 @@ async def main(opt):
                 if pars_id_news.links[index] not in list_uploaded_news:
                     pars_id_news_links.append(pars_id_news.links[index])
                     pars_url_news_links.append(pars_url_news.links[index])
-
             list_uploaded_news += pars_id_news_links 
+            log.info('Load URLs NEWS {}'.format(pars_url_news_links))
             for inews in range(len(pars_url_news_links)):
                 path = opt.dir + '/' + 'id_news_' + pars_id_news_links[inews]
                 make_dir(path)
@@ -120,6 +130,8 @@ async def main(opt):
                 path_comments = path + '/' + 'comments'
                 make_dir(path_comments)
                 html_text = await fetch_save(client, url_comment, False)
+                if not html_text:
+                    html_text = ''
                 pars_url_comment = HtmlParser(html_text, {'tag':'a', 'rel': 'nofollow', 'par_find':'href',}, opt.url)
                 for comment in pars_url_comment.links:
                     #print(comment)
@@ -127,7 +139,7 @@ async def main(opt):
                     task_comments.append(task_com)
                 await asyncio.gather(*task_comments)
             await asyncio.gather(*tasks_news)
-            print('1')
+            log.info('Processed {} news'.format(len(pars_url_news_links)))
             await asyncio.sleep(opt.period)
             
 
@@ -135,7 +147,7 @@ async def main(opt):
 if __name__ == "__main__":
     args = parser.parse_args()
     logging.basicConfig(
-        level=logging.ERROR, format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='[%H:%M:%S]')
+        level=logging.INFO, format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='[%H:%M:%S]')
     log = logging.getLogger()
     try:    
         asyncio.run(main(args))
