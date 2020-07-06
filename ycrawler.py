@@ -88,8 +88,11 @@ async def fetch_save(client, url, fsave, path = './NEWS'):
     try:
         async with client.get(url, allow_redirects=True) as resp:
             log.debug('status code {}'.format(resp.status))
-            data = await resp.read()
             if fsave:
+                buffer = b''
+                async for dline, _ in resp.content.iter_chunks():
+                    buffer += dline
+                data = buffer[:]
                 simbs = [ '\\', '/', ':', '*', '?', '"', '<', '>', '|', '+', '!', '%', '@', '~', '-']
                 for simb in simbs:
                     if simb in url:
