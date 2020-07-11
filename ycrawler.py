@@ -6,15 +6,18 @@ import logging
 import argparse
 import re
 import os
+import aiofiles
+
 
 from html.parser import HTMLParser
+
 
 parser = argparse.ArgumentParser(
     description="Asynchronous feedline for news site. default https://news.ycombinator.com")
 parser.add_argument(
     '--period',
     type=int,
-    default=360,
+    default=100,
     help="Number of seconds between poll"
 )
 parser.add_argument(
@@ -29,7 +32,9 @@ parser.add_argument(
     default='./NEWS'
 )
 
+
 URL_EXCEPTIONS = [r'^bookmarklet.html',]
+
 
 class HtmlParser(HTMLParser):
     def __init__(self, html_text, args, url = '', url_ext = URL_EXCEPTIONS):
@@ -66,15 +71,15 @@ class HtmlParser(HTMLParser):
                         self.links.append(url_data)
 
 
-def save_page(path, data):
+async def save_page(path, data):
     ''' Fuction save data in file
     arguments:
     path - A string containing the path and file name
     data - Data written to file
     '''
     filename = path
-    with open(filename, 'wb') as file:
-        file.write(data)
+    async with aiofiles.open(filename, 'wb') as file:
+        await file.write(data)
 
 
 async def fetch_save(client, url, fsave, path = './NEWS'):
@@ -100,7 +105,8 @@ async def fetch_save(client, url, fsave, path = './NEWS'):
                 len_name_file = 100 if len(url) > 100 else len(url) 
                 path = path + '/' + url[:len_name_file-5] + url[len(url)-5:]
                 log.debug('name_file {}'.format(path))
-                save_page(path, data)
+                task = asyncio.create_task(save_page(path, data))
+                await asyncio.gather(task)
             return await resp.text()
     except Exception as e:
         log.info('Error ({}) load {}'.format(e, url))
@@ -118,47 +124,49 @@ def make_dir(path):
             log.error("Create directories {} failed".format(path))
 
 
-async def main(opt):
-    list_uploaded_news = []
-    tasks_news = []
-    task_comments = []
+async def main(opt, client, list_uploaded_news = []):
+    tasks_news, task_comments = [], []
+    html_text = await fetch_save(client, opt.url, False)
+    if not html_text:
+        html_text = ''
+    pars_url_news = HtmlParser(html_text, {'tag':'a', 'class': 'storylink', 'par_find':'href',}, opt.url)
+    pars_id_news = HtmlParser(html_text, {'tag':'tr', 'class': 'athing', 'par_find':'id'}, opt.url)
+    make_dir(opt.dir)
+    pars_url_news_links, pars_id_news_links= [], []
+    for index in range(len(pars_id_news.links)):
+        if pars_id_news.links[index] not in list_uploaded_news:
+            pars_id_news_links.append(pars_id_news.links[index])
+            pars_url_news_links.append(pars_url_news.links[index])
+    list_uploaded_news += pars_id_news_links 
+    log.info('Load URLs NEWS {}'.format(pars_url_news_links))
+    for inews in range(len(pars_url_news_links)):
+        path = opt.dir + '/' + 'id_news_' + pars_id_news_links[inews]
+        make_dir(path)
+        tasks_news.append(asyncio.create_task(fetch_save(client, pars_url_news_links[inews], True, path)))
+        url_comment = opt.url + '/' + 'item?id=' + pars_id_news_links[inews]
+        path_comments = path + '/' + 'comments'
+        make_dir(path_comments)
+        html_text = await fetch_save(client, url_comment, False)
+        if not html_text:
+            html_text = ''
+        pars_url_comment = HtmlParser(html_text, {'tag':'a', 'rel': 'nofollow', 'par_find':'href',}, opt.url)
+        for comment in pars_url_comment.links:
+            task_comments.append(asyncio.create_task(fetch_save(client, comment, True, path_comments)))
+    await asyncio.gather(*tasks_news)
+    log.info('Processed {} news'.format(len(pars_url_news_links)))    
+
+
+async def request_period(opt):
     tm = aiohttp.ClientTimeout(total=30)
     conn = aiohttp.TCPConnector(limit_per_host=30)
     async with aiohttp.ClientSession(timeout=tm, connector=conn) as client:
         while True:
-            html_text = await fetch_save(client, opt.url, False)
-            if not html_text:
-                html_text = ''
-            pars_url_news = HtmlParser(html_text, {'tag':'a', 'class': 'storylink', 'par_find':'href',}, opt.url)
-            pars_id_news = HtmlParser(html_text, {'tag':'tr', 'class': 'athing', 'par_find':'id'}, opt.url)
-            make_dir(opt.dir)
-            pars_url_news_links, pars_id_news_links= [], []
-            for index in range(len(pars_id_news.links)):
-                if pars_id_news.links[index] not in list_uploaded_news:
-                    pars_id_news_links.append(pars_id_news.links[index])
-                    pars_url_news_links.append(pars_url_news.links[index])
-            list_uploaded_news += pars_id_news_links 
-            log.info('Load URLs NEWS {}'.format(pars_url_news_links))
-            for inews in range(len(pars_url_news_links)):
-                path = opt.dir + '/' + 'id_news_' + pars_id_news_links[inews]
-                make_dir(path)
-                task = asyncio.create_task(fetch_save(client, pars_url_news_links[inews], True, path))
-                tasks_news.append(task)
-                url_comment = opt.url + '/' + 'item?id=' + pars_id_news_links[inews]
-                path_comments = path + '/' + 'comments'
-                make_dir(path_comments)
-                html_text = await fetch_save(client, url_comment, False)
-                if not html_text:
-                    html_text = ''
-                pars_url_comment = HtmlParser(html_text, {'tag':'a', 'rel': 'nofollow', 'par_find':'href',}, opt.url)
-                for comment in pars_url_comment.links:
-                    task_com = asyncio.create_task(fetch_save(client, comment, True, path_comments))
-                    task_comments.append(task_com)
-                await asyncio.gather(*task_comments)
-            await asyncio.gather(*tasks_news)
-            log.info('Processed {} news'.format(len(pars_url_news_links)))
+            try:
+                await asyncio.wait_for(main(opt, client), timeout=opt.period)
+            except asyncio.TimeoutError:
+                log.info('Error timeout request_period')
             await asyncio.sleep(opt.period)
-            
+
 
 if __name__ == "__main__":
     args = parser.parse_args()
@@ -166,6 +174,6 @@ if __name__ == "__main__":
         level=logging.INFO, format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='[%H:%M:%S]')
     log = logging.getLogger()
     try:    
-        asyncio.run(main(args))
+        asyncio.run(request_period(args))
     except KeyboardInterrupt:
         pass
